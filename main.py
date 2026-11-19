@@ -1,8 +1,10 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from datetime import date, datetime
+from docx import Document
 import os
 import json
+import re
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -18,8 +20,14 @@ app.grid_rowconfigure(0, weight=1)
 PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
 ARQUIVO_CONFIG = os.path.join(PASTA_PROJETO, "config.json")
 ARQUIVO_DADOS = os.path.join(PASTA_PROJETO, "dados_contrato.json")
+PASTA_DOCUMENTOS = os.path.join(PASTA_PROJETO, "Documentos_Gerados")
 
 caminho_modelo = ""
+
+
+# ==========================================
+# CONFIGURAÇÕES E ARQUIVOS
+# ==========================================
 
 def carregar_configuracoes():
     global caminho_modelo
@@ -43,6 +51,16 @@ def salvar_configuracoes():
 def salvar_dados_contrato(dados):
     with open(ARQUIVO_DADOS, "w", encoding="utf-8") as arquivo:
         json.dump(dados, arquivo, indent=4, ensure_ascii=False)
+
+
+def carregar_dados_contrato():
+    with open(ARQUIVO_DADOS, "r", encoding="utf-8") as arquivo:
+        return json.load(arquivo)
+
+
+# ==========================================
+# FORMATAÇÃO E VALIDAÇÕES
+# ==========================================
 
 def converter_valor(valor):
     valor = valor.strip().replace("R$", "").strip()
@@ -82,6 +100,222 @@ def validar_cpf(cpf):
 
 def validar_data(data_texto):
     return datetime.strptime(data_texto, "%d/%m/%Y")
+
+
+def formatar_telefone(telefone):
+    telefone = "".join(filter(str.isdigit, telefone))
+
+    if len(telefone) == 11:
+        return f"({telefone[:2]}) {telefone[2:7]}-{telefone[7:]}"
+
+    if len(telefone) == 10:
+        return f"({telefone[:2]}) {telefone[2:6]}-{telefone[6:]}"
+
+    return telefone
+
+
+# ==========================================
+# SUBSTITUIÇÃO DOS CAMPOS NO WORD
+# ==========================================
+
+def substituir_em_paragrafo(paragrafo, identificador, valor):
+    """
+    Substitui identificadores mesmo quando o Word
+    divide o texto entre diferentes partes (runs).
+    """
+
+    substituicoes = 0
+
+    while True:
+        texto_completo = "".join(run.text for run in paragrafo.runs)
+
+        posicao = texto_completo.find(identificador)
+
+        if posicao == -1:
+            break
+
+        inicio = posicao
+        fim = posicao + len(identificador) - 1
+
+        posicao_inicio = None
+        posicao_fim = None
+
+        acumulado = 0
+
+        for indice, run in enumerate(paragrafo.runs):
+            tamanho = len(run.text)
+
+            if tamanho == 0:
+                continue
+
+            if posicao_inicio is None and inicio < acumulado + tamanho:
+                posicao_inicio = (
+                    indice,
+                    inicio - acumulado
+                )
+
+            if fim < acumulado + tamanho:
+                posicao_fim = (
+                    indice,
+                    fim - acumulado
+                )
+                break
+
+            acumulado += tamanho
+
+        if posicao_inicio is None or posicao_fim is None:
+            break
+
+        indice_inicio, deslocamento_inicio = posicao_inicio
+        indice_fim, deslocamento_fim = posicao_fim
+
+        if indice_inicio == indice_fim:
+            run = paragrafo.runs[indice_inicio]
+
+            run.text = (
+                run.text[:deslocamento_inicio]
+                + str(valor)
+                + run.text[deslocamento_fim + 1:]
+            )
+
+        else:
+            primeiro_run = paragrafo.runs[indice_inicio]
+            ultimo_run = paragrafo.runs[indice_fim]
+
+            primeiro_run.text = (
+                primeiro_run.text[:deslocamento_inicio]
+                + str(valor)
+            )
+
+            for indice in range(indice_inicio + 1, indice_fim):
+                paragrafo.runs[indice].text = ""
+
+            ultimo_run.text = ultimo_run.text[deslocamento_fim + 1:]
+
+        substituicoes += 1
+
+    return substituicoes
+
+
+def percorrer_paragrafos(paragrafos, tabelas):
+    """
+    Percorre parágrafos e tabelas, incluindo tabelas
+    dentro de outras tabelas.
+    """
+
+    for paragrafo in paragrafos:
+        yield paragrafo
+
+    for tabela in tabelas:
+        for linha in tabela.rows:
+            for celula in linha.cells:
+                yield from percorrer_paragrafos(
+                    celula.paragraphs,
+                    celula.tables
+                )
+
+
+def obter_todos_paragrafos(documento):
+    """
+    Obtém os parágrafos do corpo do documento,
+    cabeçalhos e rodapés.
+    """
+
+    yield from percorrer_paragrafos(
+        documento.paragraphs,
+        documento.tables
+    )
+
+    for secao in documento.sections:
+        yield from percorrer_paragrafos(
+            secao.header.paragraphs,
+            secao.header.tables
+        )
+
+        yield from percorrer_paragrafos(
+            secao.footer.paragraphs,
+            secao.footer.tables
+        )
+
+
+def gerar_contrato_word():
+    if not caminho_modelo or not os.path.isfile(caminho_modelo):
+        raise FileNotFoundError(
+            "Nenhum modelo Word válido foi configurado. "
+            "Verifique as Configurações do AutoDocs."
+        )
+
+    dados = carregar_dados_contrato()
+
+    documento = Document(caminho_modelo)
+
+    substituicoes = {
+        "{{LOCATARIO}}": dados["locatario"],
+        "{{CPF}}": dados["cpf"],
+        "{{TELEFONE}}": formatar_telefone(dados["telefone"]),
+        "{{ENDERECO}}": dados["endereco"],
+        "{{CHECKIN}}": dados["checkin"],
+        "{{CHECKOUT}}": dados["checkout"],
+        "{{HOSPEDES}}": str(dados["hospedes"]),
+        "{{CONVIDADOS}}": str(dados["convidados"]),
+        "{{MOTIVO_EVENTO}}": dados["motivo_evento"],
+        "{{VALOR_TOTAL}}": formatar_moeda(dados["valor_total"]),
+        "{{VALOR_RESERVA}}": formatar_moeda(dados["valor_reserva"]),
+        "{{SALDO}}": formatar_moeda(dados["saldo"]),
+        "{{DATA_EMISSAO}}": dados["data_emissao"]
+    }
+
+    encontrados = {identificador: 0 for identificador in substituicoes}
+
+    for paragrafo in obter_todos_paragrafos(documento):
+        for identificador, valor in substituicoes.items():
+
+            quantidade = substituir_em_paragrafo(
+                paragrafo,
+                identificador,
+                valor
+            )
+
+            encontrados[identificador] += quantidade
+
+    identificadores_ausentes = [
+        identificador
+        for identificador, quantidade in encontrados.items()
+        if quantidade == 0
+    ]
+
+    if identificadores_ausentes:
+        raise ValueError(
+            "Os seguintes identificadores não foram encontrados "
+            "no modelo Word:\n\n"
+            + "\n".join(identificadores_ausentes)
+        )
+
+    os.makedirs(PASTA_DOCUMENTOS, exist_ok=True)
+
+    nome_seguro = re.sub(
+        r'[<>:"/\\|?*]',
+        "",
+        dados["locatario"]
+    ).strip()
+
+    horario = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    nome_arquivo = f"Contrato_{nome_seguro}_{horario}.docx"
+
+    caminho_saida = os.path.join(
+        PASTA_DOCUMENTOS,
+        nome_arquivo
+    )
+
+    documento.save(caminho_saida)
+
+    return caminho_saida
+
+
+# ==========================================
+# INICIALIZAÇÃO
+# ==========================================
 
 carregar_configuracoes()
 
@@ -126,6 +360,11 @@ area_principal.grid(
     pady=20
 )
 
+
+# ==========================================
+# PÁGINA: NOVO DOCUMENTO
+# ==========================================
+
 def criar_pagina_novo_documento():
 
     formulario = ctk.CTkScrollableFrame(
@@ -150,38 +389,31 @@ def criar_pagina_novo_documento():
 
     secao_locatario = ctk.CTkLabel(
         formulario,
-        text="Dados do locatário",
+        text="Dados da locatária",
         font=("Arial", 18, "bold")
     )
     secao_locatario.pack(anchor="w", padx=20, pady=(10, 10))
 
     campo_nome = ctk.CTkEntry(
         formulario,
-        placeholder_text="Nome completo do locatário",
+        placeholder_text="Nome completo da locatária",
         height=40
     )
     campo_nome.pack(fill="x", padx=20, pady=6)
 
-    linha_documentos = ctk.CTkFrame(
-        formulario,
-        fg_color="transparent"
-    )
-    linha_documentos.pack(fill="x", padx=20, pady=6)
-    linha_documentos.grid_columnconfigure((0, 1), weight=1)
-
     campo_cpf = ctk.CTkEntry(
-        linha_documentos,
+        formulario,
         placeholder_text="CPF",
         height=40
     )
-    campo_cpf.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+    campo_cpf.pack(fill="x", padx=20, pady=6)
 
-    campo_cnh = ctk.CTkEntry(
-        linha_documentos,
-        placeholder_text="Número da CNH",
+    campo_endereco = ctk.CTkEntry(
+        formulario,
+        placeholder_text="Endereço completo da locatária",
         height=40
     )
-    campo_cnh.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+    campo_endereco.pack(fill="x", padx=20, pady=6)
 
     linha_contato = ctk.CTkFrame(
         formulario,
@@ -199,10 +431,24 @@ def criar_pagina_novo_documento():
 
     campo_hospedes = ctk.CTkEntry(
         linha_contato,
-        placeholder_text="Quantidade de hóspedes",
+        placeholder_text="Hóspedes para pernoite",
         height=40
     )
     campo_hospedes.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+
+    campo_convidados = ctk.CTkEntry(
+        formulario,
+        placeholder_text="Quantidade de convidados do evento",
+        height=40
+    )
+    campo_convidados.pack(fill="x", padx=20, pady=6)
+
+    campo_motivo_evento = ctk.CTkEntry(
+        formulario,
+        placeholder_text="Motivo do evento (ex: Comemoração de aniversário)",
+        height=40
+    )
+    campo_motivo_evento.pack(fill="x", padx=20, pady=6)
 
     secao_periodo = ctk.CTkLabel(
         formulario,
@@ -248,7 +494,7 @@ def criar_pagina_novo_documento():
 
     campo_reserva = ctk.CTkEntry(
         formulario,
-        placeholder_text="Valor pago pela reserva (ex: 500,00)",
+        placeholder_text="Valor pago de entrada/sinal (ex: 500,00)",
         height=40
     )
     campo_reserva.pack(fill="x", padx=20, pady=6)
@@ -287,14 +533,8 @@ def criar_pagina_novo_documento():
         except ValueError:
             label_saldo.configure(text="Valor inválido")
 
-    campo_valor_total.bind(
-        "<KeyRelease>",
-        atualizar_saldo
-    )
-    campo_reserva.bind(
-        "<KeyRelease>",
-        atualizar_saldo
-    )
+    campo_valor_total.bind("<KeyRelease>", atualizar_saldo)
+    campo_reserva.bind("<KeyRelease>", atualizar_saldo)
 
     secao_modelo = ctk.CTkLabel(
         formulario,
@@ -336,91 +576,97 @@ def criar_pagina_novo_documento():
     )
     label_data.pack(anchor="w", padx=20, pady=5)
 
+    # ======================================
+    # VALIDAÇÃO E GERAÇÃO DO CONTRATO
+    # ======================================
+
     def validar_formulario():
 
         nome = campo_nome.get().strip()
         cpf = campo_cpf.get().strip()
-        cnh = campo_cnh.get().strip()
+        endereco = campo_endereco.get().strip()
+
         telefone = "".join(
             filter(str.isdigit, campo_telefone.get())
         )
+
         hospedes = campo_hospedes.get().strip()
+        convidados = campo_convidados.get().strip()
+        motivo_evento = campo_motivo_evento.get().strip()
+
         checkin = campo_checkin.get().strip()
         checkout = campo_checkout.get().strip()
+
         valor_total = campo_valor_total.get().strip()
         valor_reserva = campo_reserva.get().strip()
 
         erros = []
 
         if not nome:
-            erros.append(
-                "Informe o nome completo do locatário."
-            )
+            erros.append("Informe o nome completo da locatária.")
 
         if not validar_cpf(cpf):
             erros.append("CPF inválido.")
 
-        cnh_digitos = "".join(filter(str.isdigit, cnh))
-
-        if len(cnh_digitos) != 11:
-            erros.append(
-                "A CNH deve possuir 11 dígitos."
-            )
+        if not endereco:
+            erros.append("Informe o endereço completo da locatária.")
 
         if len(telefone) not in (10, 11):
-            erros.append(
-                "Telefone inválido. Informe DDD e número."
-            )
+            erros.append("Telefone inválido. Informe DDD e número.")
 
         try:
-            quantidade = int(hospedes)
+            quantidade_hospedes = int(hospedes)
 
-            if quantidade <= 0:
+            if quantidade_hospedes <= 0:
                 erros.append(
                     "A quantidade de hóspedes deve ser maior que zero."
                 )
 
         except ValueError:
-            erros.append(
-                "Informe uma quantidade válida de hóspedes."
-            )
+            quantidade_hospedes = 0
+            erros.append("Informe uma quantidade válida de hóspedes.")
+
+        try:
+            quantidade_convidados = int(convidados)
+
+            if quantidade_convidados < 0:
+                erros.append(
+                    "A quantidade de convidados não pode ser negativa."
+                )
+
+        except ValueError:
+            quantidade_convidados = 0
+            erros.append("Informe uma quantidade válida de convidados.")
+
+        if not motivo_evento:
+            erros.append("Informe o motivo do evento.")
 
         try:
             data_entrada = validar_data(checkin)
 
         except ValueError:
             data_entrada = None
-            erros.append(
-                "Data de entrada inválida. Use DD/MM/AAAA."
-            )
+            erros.append("Data de entrada inválida. Use DD/MM/AAAA.")
 
         try:
             data_saida = validar_data(checkout)
 
         except ValueError:
             data_saida = None
-            erros.append(
-                "Data de saída inválida. Use DD/MM/AAAA."
-            )
+            erros.append("Data de saída inválida. Use DD/MM/AAAA.")
 
         if data_entrada and data_saida:
             if data_saida <= data_entrada:
-                erros.append(
-                    "A saída deve ser posterior à entrada."
-                )
+                erros.append("A saída deve ser posterior à entrada.")
 
         try:
             total = converter_valor(valor_total)
 
             if not valor_total:
-                erros.append(
-                    "Informe o valor total do aluguel."
-                )
+                erros.append("Informe o valor total do aluguel.")
 
             elif total <= 0:
-                erros.append(
-                    "O valor total deve ser maior que zero."
-                )
+                erros.append("O valor total deve ser maior que zero.")
 
         except ValueError:
             total = 0
@@ -430,24 +676,20 @@ def criar_pagina_novo_documento():
             reserva = converter_valor(valor_reserva)
 
             if not valor_reserva:
-                erros.append(
-                    "Informe o valor pago pela reserva."
-                )
+                erros.append("Informe o valor pago de entrada/sinal.")
 
             elif reserva < 0:
                 erros.append(
-                    "O valor da reserva não pode ser negativo."
+                    "O valor da entrada/sinal não pode ser negativo."
                 )
 
         except ValueError:
             reserva = 0
-            erros.append(
-                "Valor pago pela reserva inválido."
-            )
+            erros.append("Valor pago de entrada/sinal inválido.")
 
         if total > 0 and reserva > total:
             erros.append(
-                "O valor da reserva não pode ser maior que o aluguel."
+                "O valor da entrada/sinal não pode ser maior que o aluguel."
             )
 
         if erros:
@@ -460,9 +702,11 @@ def criar_pagina_novo_documento():
         dados_contrato = {
             "locatario": nome,
             "cpf": cpf,
-            "cnh": cnh_digitos,
+            "endereco": endereco,
             "telefone": telefone,
-            "hospedes": quantidade,
+            "hospedes": quantidade_hospedes,
+            "convidados": quantidade_convidados,
+            "motivo_evento": motivo_evento,
             "checkin": checkin,
             "checkout": checkout,
             "valor_total": total,
@@ -474,31 +718,43 @@ def criar_pagina_novo_documento():
         try:
             salvar_dados_contrato(dados_contrato)
 
+            caminho_gerado = gerar_contrato_word()
+
             messagebox.showinfo(
-                "Validação concluída",
-                "Todos os dados foram validados e salvos com sucesso!"
+                "Contrato gerado!",
+                "Os dados foram validados e o contrato foi gerado "
+                "com sucesso!\n\n"
+                f"Arquivo salvo em:\n{caminho_gerado}"
             )
 
-        except OSError as erro:
+        except (FileNotFoundError, ValueError, KeyError) as erro:
             messagebox.showerror(
-                "Erro ao salvar",
-                f"Não foi possível salvar os dados:\n{erro}"
+                "Não foi possível gerar o contrato",
+                str(erro)
             )
 
-    btn_validar = ctk.CTkButton(
+        except Exception as erro:
+            messagebox.showerror(
+                "Erro inesperado",
+                f"Ocorreu um erro durante a geração:\n{erro}"
+            )
+
+    btn_gerar = ctk.CTkButton(
         formulario,
-        text="Validar dados",
+        text="Validar dados e gerar contrato",
         height=45,
         font=("Arial", 16, "bold"),
         command=validar_formulario
     )
-    btn_validar.pack(fill="x", padx=20, pady=(20, 10))
+    btn_gerar.pack(fill="x", padx=20, pady=(20, 10))
 
-    espaco_final = ctk.CTkLabel(
-        formulario,
-        text=""
-    )
+    espaco_final = ctk.CTkLabel(formulario, text="")
     espaco_final.pack(pady=15)
+
+
+# ==========================================
+# PÁGINA: CONFIGURAÇÕES
+# ==========================================
 
 def criar_pagina_configuracoes():
 
@@ -589,13 +845,14 @@ def criar_pagina_configuracoes():
         height=40,
         command=selecionar_modelo
     )
-    btn_selecionar.pack(
-        anchor="w",
-        padx=25,
-        pady=10
-    )
+    btn_selecionar.pack(anchor="w", padx=25, pady=10)
 
     atualizar_label_modelo()
+
+
+# ==========================================
+# NAVEGAÇÃO ENTRE PÁGINAS
+# ==========================================
 
 def mostrar_pagina(nome_pagina):
 
@@ -629,6 +886,7 @@ def mostrar_pagina(nome_pagina):
         font=("Arial", 14)
     )
     descricao.pack(pady=10)
+
 
 mostrar_pagina("Bem-vindo ao AutoDocs")
 
