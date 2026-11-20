@@ -7,24 +7,31 @@ import json
 import re
 import subprocess
 
+# Define a aparência inicial da janela.
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
+# Cria a janela principal do AutoDocs.
 app = ctk.CTk()
 app.title("AutoDocs")
 app.geometry("1000x700")
 app.minsize(800, 600)
 
+# Configura o espaço usado pelas áreas da interface.
 app.grid_columnconfigure(1, weight=1)
 app.grid_rowconfigure(0, weight=1)
 
+# Define os caminhos dos arquivos e pastas do projeto.
 PASTA_PROJETO = os.path.dirname(os.path.abspath(__file__))
 ARQUIVO_CONFIG = os.path.join(PASTA_PROJETO, "config.json")
 ARQUIVO_DADOS = os.path.join(PASTA_PROJETO, "dados_contrato.json")
 PASTA_DOCUMENTOS = os.path.join(PASTA_PROJETO, "Documentos_Gerados")
 
+# Guarda o caminho do modelo Word selecionado nas configurações.
 caminho_modelo = ""
 
+
+# Carrega do JSON o caminho do modelo Word salvo anteriormente.
 def carregar_configuracoes():
     global caminho_modelo
 
@@ -37,6 +44,7 @@ def carregar_configuracoes():
         caminho_modelo = ""
 
 
+# Salva no JSON o caminho do modelo Word selecionado.
 def salvar_configuracoes():
     configuracoes = {"caminho_modelo": caminho_modelo}
 
@@ -44,15 +52,19 @@ def salvar_configuracoes():
         json.dump(configuracoes, arquivo, indent=4, ensure_ascii=False)
 
 
+# Salva os dados preenchidos no formulário em um arquivo JSON.
 def salvar_dados_contrato(dados):
     with open(ARQUIVO_DADOS, "w", encoding="utf-8") as arquivo:
         json.dump(dados, arquivo, indent=4, ensure_ascii=False)
 
 
+# Lê e retorna os dados do contrato que estão no arquivo JSON.
 def carregar_dados_contrato():
     with open(ARQUIVO_DADOS, "r", encoding="utf-8") as arquivo:
         return json.load(arquivo)
 
+
+# Converte um valor digitado no formato brasileiro para número decimal.
 def converter_valor(valor):
     valor = valor.strip().replace("R$", "").strip()
 
@@ -62,6 +74,7 @@ def converter_valor(valor):
     return float(valor) if valor else 0
 
 
+# Formata um número como moeda brasileira (por exemplo, R$ 2.000,00).
 def formatar_moeda(valor):
     return (
         f"R$ {valor:,.2f}"
@@ -71,6 +84,7 @@ def formatar_moeda(valor):
     )
 
 
+# Verifica se o CPF possui 11 dígitos e os dígitos verificadores corretos.
 def validar_cpf(cpf):
     cpf = "".join(filter(str.isdigit, cpf))
 
@@ -89,10 +103,12 @@ def validar_cpf(cpf):
     return digito2 == int(cpf[10])
 
 
+# Confere se a data está no formato DD/MM/AAAA.
 def validar_data(data_texto):
     return datetime.strptime(data_texto, "%d/%m/%Y")
 
 
+# Formata o telefone conforme a quantidade de dígitos.
 def formatar_telefone(telefone):
     telefone = "".join(filter(str.isdigit, telefone))
 
@@ -104,12 +120,10 @@ def formatar_telefone(telefone):
 
     return telefone
 
-def substituir_em_paragrafo(paragrafo, identificador, valor):
-    """
-    Substitui identificadores mesmo quando o Word
-    divide o texto entre diferentes partes (runs).
-    """
 
+# Substitui um identificador no parágrafo, mesmo quando o Word divide
+# o texto entre diferentes partes (runs).
+def substituir_em_paragrafo(paragrafo, identificador, valor):
     substituicoes = 0
 
     while True:
@@ -128,6 +142,7 @@ def substituir_em_paragrafo(paragrafo, identificador, valor):
 
         acumulado = 0
 
+        # Descobre em quais partes do parágrafo o identificador está.
         for indice, run in enumerate(paragrafo.runs):
             tamanho = len(run.text)
 
@@ -155,6 +170,7 @@ def substituir_em_paragrafo(paragrafo, identificador, valor):
         indice_inicio, deslocamento_inicio = posicao_inicio
         indice_fim, deslocamento_fim = posicao_fim
 
+        # Se o identificador estiver em uma única parte, faz a troca nela.
         if indice_inicio == indice_fim:
             run = paragrafo.runs[indice_inicio]
 
@@ -164,6 +180,7 @@ def substituir_em_paragrafo(paragrafo, identificador, valor):
                 + run.text[deslocamento_fim + 1:]
             )
 
+        # Se estiver dividido, junta a substituição e limpa as partes antigas.
         else:
             primeiro_run = paragrafo.runs[indice_inicio]
             ultimo_run = paragrafo.runs[indice_fim]
@@ -183,12 +200,9 @@ def substituir_em_paragrafo(paragrafo, identificador, valor):
     return substituicoes
 
 
+# Percorre os parágrafos e as tabelas do documento, inclusive tabelas
+# que estejam dentro de outras tabelas.
 def percorrer_paragrafos(paragrafos, tabelas):
-    """
-    Percorre parágrafos e tabelas, incluindo tabelas
-    dentro de outras tabelas.
-    """
-
     for paragrafo in paragrafos:
         yield paragrafo
 
@@ -201,12 +215,8 @@ def percorrer_paragrafos(paragrafos, tabelas):
                 )
 
 
+# Reúne os parágrafos do corpo, dos cabeçalhos e dos rodapés do Word.
 def obter_todos_paragrafos(documento):
-    """
-    Obtém os parágrafos do corpo do documento,
-    cabeçalhos e rodapés.
-    """
-
     yield from percorrer_paragrafos(
         documento.paragraphs,
         documento.tables
@@ -223,6 +233,8 @@ def obter_todos_paragrafos(documento):
             secao.footer.tables
         )
 
+
+# Abre o modelo Word, preenche os identificadores e salva uma cópia.
 def gerar_contrato_word():
     if not caminho_modelo or not os.path.isfile(caminho_modelo):
         raise FileNotFoundError(
@@ -234,6 +246,7 @@ def gerar_contrato_word():
 
     documento = Document(caminho_modelo)
 
+    # Relaciona cada identificador do modelo Word ao dado correspondente.
     substituicoes = {
         "{{LOCATARIO}}": dados["locatario"],
         "{{CPF}}": dados["cpf"],
@@ -250,6 +263,7 @@ def gerar_contrato_word():
         "{{DATA_EMISSAO}}": dados["data_emissao"]
     }
 
+    # Conta quantas vezes cada identificador foi encontrado no modelo.
     encontrados = {identificador: 0 for identificador in substituicoes}
 
     for paragrafo in obter_todos_paragrafos(documento):
@@ -263,6 +277,7 @@ def gerar_contrato_word():
 
             encontrados[identificador] += quantidade
 
+    # Impede a geração caso algum identificador esperado não exista no modelo.
     identificadores_ausentes = [
         identificador
         for identificador, quantidade in encontrados.items()
@@ -276,8 +291,10 @@ def gerar_contrato_word():
             + "\n".join(identificadores_ausentes)
         )
 
+    # Cria a pasta de saída caso ela ainda não exista.
     os.makedirs(PASTA_DOCUMENTOS, exist_ok=True)
 
+    # Limpa caracteres que não podem ser usados no nome do arquivo.
     nome_seguro = re.sub(
         r'[<>:"/\\|?*]',
         "",
@@ -297,11 +314,14 @@ def gerar_contrato_word():
 
     return caminho_saida
 
+
+# Converte o documento Word gerado para PDF usando o LibreOffice.
 def converter_word_para_pdf(caminho_word):
     caminho_libreoffice = r"C:\Program Files\LibreOffice\program\soffice.exe"
 
     pasta_destino = os.path.dirname(caminho_word)
 
+    # Monta o comando para executar a conversão sem abrir a janela do programa.
     comando = [
         caminho_libreoffice,
         "--headless",
@@ -310,6 +330,7 @@ def converter_word_para_pdf(caminho_word):
         caminho_word
     ]
 
+    # Executa a conversão e aguarda no máximo 60 segundos.
     resultado = subprocess.run(
         comando,
         capture_output=True,
@@ -319,6 +340,7 @@ def converter_word_para_pdf(caminho_word):
 
     caminho_pdf = os.path.splitext(caminho_word)[0] + ".pdf"
 
+    # Confere se o LibreOffice terminou sem erro e criou o arquivo PDF.
     if resultado.returncode != 0 or not os.path.exists(caminho_pdf):
         raise RuntimeError(
             f"Erro ao converter contrato para PDF:\n{resultado.stderr}"
@@ -326,8 +348,12 @@ def converter_word_para_pdf(caminho_word):
 
     return caminho_pdf
 
+
+# Recupera as configurações salvas antes de montar a interface.
 carregar_configuracoes()
 
+
+# Cria o menu lateral com os botões de navegação.
 menu_lateral = ctk.CTkFrame(app, width=200, corner_radius=0)
 menu_lateral.grid(row=0, column=0, sticky="nsew")
 menu_lateral.grid_propagate(False)
@@ -360,6 +386,7 @@ btn_configuracoes = ctk.CTkButton(
 )
 btn_configuracoes.pack(fill="x", padx=15, pady=8)
 
+# Área onde o conteúdo de cada página será exibido.
 area_principal = ctk.CTkFrame(app, corner_radius=0)
 area_principal.grid(
     row=0,
@@ -369,6 +396,8 @@ area_principal.grid(
     pady=20
 )
 
+
+# Monta a página do formulário para gerar um novo contrato.
 def criar_pagina_novo_documento():
 
     formulario = ctk.CTkScrollableFrame(
@@ -391,6 +420,7 @@ def criar_pagina_novo_documento():
     )
     descricao.pack(anchor="w", padx=20, pady=(0, 20))
 
+    # Preenche os campos com informações fictícias para facilitar os testes.
     def preencher_dados_teste():
         dados_teste = {
             "nome": "João da Silva",
@@ -422,12 +452,13 @@ def criar_pagina_novo_documento():
 
         valores = list(dados_teste.values())
 
+        # Insere cada dado de teste no campo correspondente.
         for campo, valor in zip(campos, valores):
             campo.delete(0, "end")
             campo.insert(0, valor)
 
         atualizar_saldo()
-        
+
     btn_dados_teste = ctk.CTkButton(
         formulario,
         text="Preencher dados de teste",
@@ -551,6 +582,7 @@ def criar_pagina_novo_documento():
     )
     campo_reserva.pack(fill="x", padx=20, pady=6)
 
+    # Exibe o saldo que ainda falta pagar.
     saldo_frame = ctk.CTkFrame(
         formulario,
         corner_radius=10
@@ -571,6 +603,7 @@ def criar_pagina_novo_documento():
     )
     label_saldo.pack(side="right", padx=15, pady=15)
 
+    # Calcula o saldo subtraindo o valor da reserva do valor total.
     def atualizar_saldo(event=None):
         try:
             total = converter_valor(campo_valor_total.get())
@@ -585,6 +618,7 @@ def criar_pagina_novo_documento():
         except ValueError:
             label_saldo.configure(text="Valor inválido")
 
+    # Atualiza o saldo sempre que um dos valores for alterado.
     campo_valor_total.bind("<KeyRelease>", atualizar_saldo)
     campo_reserva.bind("<KeyRelease>", atualizar_saldo)
 
@@ -595,6 +629,7 @@ def criar_pagina_novo_documento():
     )
     secao_modelo.pack(anchor="w", padx=20, pady=(25, 10))
 
+    # Informa se já existe um modelo Word configurado.
     if caminho_modelo and os.path.isfile(caminho_modelo):
         texto_modelo = (
             f"Modelo configurado: {os.path.basename(caminho_modelo)}"
@@ -619,6 +654,7 @@ def criar_pagina_novo_documento():
     )
     secao_emissao.pack(anchor="w", padx=20, pady=(25, 10))
 
+    # Usa a data atual como data de emissão do contrato.
     data_atual = date.today().strftime("%d/%m/%Y")
 
     label_data = ctk.CTkLabel(
@@ -628,6 +664,7 @@ def criar_pagina_novo_documento():
     )
     label_data.pack(anchor="w", padx=20, pady=5)
 
+    # Reúne os campos, verifica os dados e informa se houver algum problema.
     def validar_formulario():
 
         nome = campo_nome.get().strip()
@@ -650,6 +687,7 @@ def criar_pagina_novo_documento():
 
         erros = []
 
+        # Verifica se os dados obrigatórios foram preenchidos corretamente.
         if not nome:
             erros.append("Informe o nome completo da locatária.")
 
@@ -662,6 +700,7 @@ def criar_pagina_novo_documento():
         if len(telefone) not in (10, 11):
             erros.append("Telefone inválido. Informe DDD e número.")
 
+        # Confere se a quantidade de hóspedes é um número maior que zero.
         try:
             quantidade_hospedes = int(hospedes)
 
@@ -674,6 +713,7 @@ def criar_pagina_novo_documento():
             quantidade_hospedes = 0
             erros.append("Informe uma quantidade válida de hóspedes.")
 
+        # Confere se a quantidade de convidados é um número não negativo.
         try:
             quantidade_convidados = int(convidados)
 
@@ -689,6 +729,7 @@ def criar_pagina_novo_documento():
         if not motivo_evento:
             erros.append("Informe o motivo do evento.")
 
+        # Verifica se as datas foram digitadas no formato esperado.
         try:
             data_entrada = validar_data(checkin)
 
@@ -703,10 +744,12 @@ def criar_pagina_novo_documento():
             data_saida = None
             erros.append("Data de saída inválida. Use DD/MM/AAAA.")
 
+        # A data de saída precisa ser posterior à data de entrada.
         if data_entrada and data_saida:
             if data_saida <= data_entrada:
                 erros.append("A saída deve ser posterior à entrada.")
 
+        # Converte e valida o valor total do aluguel.
         try:
             total = converter_valor(valor_total)
 
@@ -720,6 +763,7 @@ def criar_pagina_novo_documento():
             total = 0
             erros.append("Valor total inválido.")
 
+        # Converte e valida o valor pago como entrada ou sinal.
         try:
             reserva = converter_valor(valor_reserva)
 
@@ -735,11 +779,13 @@ def criar_pagina_novo_documento():
             reserva = 0
             erros.append("Valor pago de entrada/sinal inválido.")
 
+        # A entrada não pode ser maior que o valor total do aluguel.
         if total > 0 and reserva > total:
             erros.append(
                 "O valor da entrada/sinal não pode ser maior que o aluguel."
             )
 
+        # Mostra todos os problemas encontrados e interrompe a geração.
         if erros:
             messagebox.showerror(
                 "Verifique os dados",
@@ -747,6 +793,7 @@ def criar_pagina_novo_documento():
             )
             return
 
+        # Organiza os dados validados que serão usados no contrato.
         dados_contrato = {
             "locatario": nome,
             "cpf": cpf,
@@ -764,6 +811,7 @@ def criar_pagina_novo_documento():
         }
 
         try:
+            # Salva os dados, gera o Word, converte para PDF e apaga o Word temporário.
             salvar_dados_contrato(dados_contrato)
 
             caminho_word = gerar_contrato_word()
@@ -777,12 +825,14 @@ def criar_pagina_novo_documento():
                 f"Arquivo PDF salvo em:\n{caminho_pdf}"
             )
 
+        # Exibe erros conhecidos, como modelo ausente ou dados incorretos.
         except (FileNotFoundError, ValueError, KeyError) as erro:
             messagebox.showerror(
                 "Não foi possível gerar o contrato",
                 str(erro)
             )
 
+        # Captura outros erros que possam acontecer durante a geração.
         except Exception as erro:
             messagebox.showerror(
                 "Erro inesperado",
@@ -801,6 +851,8 @@ def criar_pagina_novo_documento():
     espaco_final = ctk.CTkLabel(formulario, text="")
     espaco_final.pack(pady=15)
 
+
+# Monta a página usada para escolher o modelo de contrato Word.
 def criar_pagina_configuracoes():
 
     frame_config = ctk.CTkFrame(
@@ -844,6 +896,7 @@ def criar_pagina_configuracoes():
     )
     label_modelo_config.pack(anchor="w", padx=25, pady=10)
 
+    # Atualiza o texto da tela conforme a situação do modelo configurado.
     def atualizar_label_modelo():
 
         if caminho_modelo and os.path.isfile(caminho_modelo):
@@ -864,6 +917,7 @@ def criar_pagina_configuracoes():
                 text="Nenhum modelo de contrato foi selecionado."
             )
 
+    # Abre a janela de arquivos e salva o modelo escolhido pelo usuário.
     def selecionar_modelo():
         global caminho_modelo
 
@@ -894,8 +948,11 @@ def criar_pagina_configuracoes():
 
     atualizar_label_modelo()
 
+
+# Troca o conteúdo da área principal conforme a página escolhida no menu.
 def mostrar_pagina(nome_pagina):
 
+    # Remove os elementos da página anterior.
     for widget in area_principal.winfo_children():
         widget.destroy()
 
@@ -928,6 +985,7 @@ def mostrar_pagina(nome_pagina):
     descricao.pack(pady=10)
 
 
+# Abre a tela inicial e mantém a aplicação em execução.
 mostrar_pagina("Bem-vindo ao AutoDocs")
 
 app.mainloop()
