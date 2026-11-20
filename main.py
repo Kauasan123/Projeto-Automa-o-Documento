@@ -5,6 +5,7 @@ from docx import Document
 import os
 import json
 import re
+import subprocess
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -23,11 +24,6 @@ ARQUIVO_DADOS = os.path.join(PASTA_PROJETO, "dados_contrato.json")
 PASTA_DOCUMENTOS = os.path.join(PASTA_PROJETO, "Documentos_Gerados")
 
 caminho_modelo = ""
-
-
-# ==========================================
-# CONFIGURAÇÕES E ARQUIVOS
-# ==========================================
 
 def carregar_configuracoes():
     global caminho_modelo
@@ -56,11 +52,6 @@ def salvar_dados_contrato(dados):
 def carregar_dados_contrato():
     with open(ARQUIVO_DADOS, "r", encoding="utf-8") as arquivo:
         return json.load(arquivo)
-
-
-# ==========================================
-# FORMATAÇÃO E VALIDAÇÕES
-# ==========================================
 
 def converter_valor(valor):
     valor = valor.strip().replace("R$", "").strip()
@@ -112,11 +103,6 @@ def formatar_telefone(telefone):
         return f"({telefone[:2]}) {telefone[2:6]}-{telefone[6:]}"
 
     return telefone
-
-
-# ==========================================
-# SUBSTITUIÇÃO DOS CAMPOS NO WORD
-# ==========================================
 
 def substituir_em_paragrafo(paragrafo, identificador, valor):
     """
@@ -237,7 +223,6 @@ def obter_todos_paragrafos(documento):
             secao.footer.tables
         )
 
-
 def gerar_contrato_word():
     if not caminho_modelo or not os.path.isfile(caminho_modelo):
         raise FileNotFoundError(
@@ -312,10 +297,34 @@ def gerar_contrato_word():
 
     return caminho_saida
 
+def converter_word_para_pdf(caminho_word):
+    caminho_libreoffice = r"C:\Program Files\LibreOffice\program\soffice.exe"
 
-# ==========================================
-# INICIALIZAÇÃO
-# ==========================================
+    pasta_destino = os.path.dirname(caminho_word)
+
+    comando = [
+        caminho_libreoffice,
+        "--headless",
+        "--convert-to", "pdf",
+        "--outdir", pasta_destino,
+        caminho_word
+    ]
+
+    resultado = subprocess.run(
+        comando,
+        capture_output=True,
+        text=True,
+        timeout=60
+    )
+
+    caminho_pdf = os.path.splitext(caminho_word)[0] + ".pdf"
+
+    if resultado.returncode != 0 or not os.path.exists(caminho_pdf):
+        raise RuntimeError(
+            f"Erro ao converter contrato para PDF:\n{resultado.stderr}"
+        )
+
+    return caminho_pdf
 
 carregar_configuracoes()
 
@@ -360,11 +369,6 @@ area_principal.grid(
     pady=20
 )
 
-
-# ==========================================
-# PÁGINA: NOVO DOCUMENTO
-# ==========================================
-
 def criar_pagina_novo_documento():
 
     formulario = ctk.CTkScrollableFrame(
@@ -386,6 +390,54 @@ def criar_pagina_novo_documento():
         font=("Arial", 14)
     )
     descricao.pack(anchor="w", padx=20, pady=(0, 20))
+
+    def preencher_dados_teste():
+        dados_teste = {
+            "nome": "João da Silva",
+            "cpf": "529.982.247-25",
+            "endereco": "Rua das Flores, 123, Centro, Pelotas/RS",
+            "telefone": "53999999999",
+            "hospedes": "2",
+            "convidados": "5",
+            "motivo_evento": "Aniversário",
+            "checkin": "20/12/2026",
+            "checkout": "25/12/2026",
+            "valor_total": "2000,00",
+            "valor_reserva": "500,00"
+        }
+
+        campos = [
+            campo_nome,
+            campo_cpf,
+            campo_endereco,
+            campo_telefone,
+            campo_hospedes,
+            campo_convidados,
+            campo_motivo_evento,
+            campo_checkin,
+            campo_checkout,
+            campo_valor_total,
+            campo_reserva
+        ]
+
+        valores = list(dados_teste.values())
+
+        for campo, valor in zip(campos, valores):
+            campo.delete(0, "end")
+            campo.insert(0, valor)
+
+        atualizar_saldo()
+        
+    btn_dados_teste = ctk.CTkButton(
+        formulario,
+        text="Preencher dados de teste",
+        height=40,
+        fg_color="#455A64",
+        hover_color="#37474F",
+        command=preencher_dados_teste
+    )
+
+    btn_dados_teste.pack(fill="x", padx=20, pady=(5, 15))
 
     secao_locatario = ctk.CTkLabel(
         formulario,
@@ -576,10 +628,6 @@ def criar_pagina_novo_documento():
     )
     label_data.pack(anchor="w", padx=20, pady=5)
 
-    # ======================================
-    # VALIDAÇÃO E GERAÇÃO DO CONTRATO
-    # ======================================
-
     def validar_formulario():
 
         nome = campo_nome.get().strip()
@@ -718,13 +766,15 @@ def criar_pagina_novo_documento():
         try:
             salvar_dados_contrato(dados_contrato)
 
-            caminho_gerado = gerar_contrato_word()
+            caminho_word = gerar_contrato_word()
+            caminho_pdf = converter_word_para_pdf(caminho_word)
+            os.remove(caminho_word)
 
             messagebox.showinfo(
                 "Contrato gerado!",
                 "Os dados foram validados e o contrato foi gerado "
                 "com sucesso!\n\n"
-                f"Arquivo salvo em:\n{caminho_gerado}"
+                f"Arquivo PDF salvo em:\n{caminho_pdf}"
             )
 
         except (FileNotFoundError, ValueError, KeyError) as erro:
@@ -750,11 +800,6 @@ def criar_pagina_novo_documento():
 
     espaco_final = ctk.CTkLabel(formulario, text="")
     espaco_final.pack(pady=15)
-
-
-# ==========================================
-# PÁGINA: CONFIGURAÇÕES
-# ==========================================
 
 def criar_pagina_configuracoes():
 
@@ -848,11 +893,6 @@ def criar_pagina_configuracoes():
     btn_selecionar.pack(anchor="w", padx=25, pady=10)
 
     atualizar_label_modelo()
-
-
-# ==========================================
-# NAVEGAÇÃO ENTRE PÁGINAS
-# ==========================================
 
 def mostrar_pagina(nome_pagina):
 
