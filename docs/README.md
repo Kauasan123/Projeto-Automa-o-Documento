@@ -2,6 +2,9 @@
 
 **Automação de preenchimento e geração de contratos de aluguel em PDF.**
 
+**Integrantes**
+Kauã Santos Das Neves - Renata Garcia
+
 ## 1. Sobre o Projeto
 
 O **AutoDocs** é uma aplicação desktop desenvolvida em Python com o objetivo de automatizar o preenchimento e a geração de contratos de aluguel.
